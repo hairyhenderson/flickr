@@ -3,7 +3,7 @@ package flickr
 import (
 	"testing"
 
-	flickErr "gopkg.in/masci/flickr.v2/error"
+	flickErr "github.com/hairyhenderson/flickr/error"
 )
 
 func TestParseRequestToken(t *testing.T) {

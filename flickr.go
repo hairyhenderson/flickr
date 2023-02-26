@@ -23,7 +23,7 @@ func DoGet(client *FlickrClient, r FlickrResponse) error {
 		return err
 	}
 
-	return parseApiResponse(res, r)
+	return ParseApiResponse(res, r)
 }
 
 // Perform a POST request to the Flickr API with the configured FlickrClient, the
@@ -35,7 +35,7 @@ func DoPostBody(client *FlickrClient, body *bytes.Buffer, bodyType string, r Fli
 		return err
 	}
 
-	return parseApiResponse(res, r)
+	return ParseApiResponse(res, r)
 }
 
 // Perform a POST request to the Flickr API with the configured FlickrClient,

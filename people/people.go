@@ -1,10 +1,15 @@
 package people
 
 import (
+	"context"
+	"encoding/xml"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strconv"
+	"time"
 
-	"gopkg.in/masci/flickr.v2"
+	"github.com/hairyhenderson/flickr"
 )
 
 type PhotoList struct {
@@ -34,8 +39,8 @@ type PhotoList struct {
 		DateTaken      string `xml:"date_taken,attr"`
 		OwnerName      string `xml:"owner_name,attr"`
 		IconServer     string `xml:"icon_server,attr"`
-		OriginalFormat string `xml:"original_format",attr`
-		LastUpdate     string `xml:"last_udpate",attr`
+		OriginalFormat string `xml:"original_format,attr"`
+		LastUpdate     string `xml:"last_udpate,attr"`
 
 		// Geo - these attributes are provided when extras contains "geo"
 		Latitude  string `xml:"latitude,attr"`
@@ -157,51 +162,173 @@ type GetPhotosOptionalArgs struct {
 	Page          int               // 0 to ignore
 }
 
-func GetPhotos(client *flickr.FlickrClient,
-	userId string, opts GetPhotosOptionalArgs) (*PhotoListResponse, error) {
-	client.Init()
-	client.EndpointUrl = flickr.API_ENDPOINT
-	client.Args.Set("method", "flickr.people.getPhotos")
-	client.Args.Set("user_id", userId)
+type Person struct {
+	ID                           string `xml:"id,attr"`
+	NSID                         string `xml:"nsid,attr"`
+	IsPro                        bool   `xml:"ispro,attr"`
+	IsDeleted                    bool   `xml:"is_deleted,attr"`
+	IconServer                   int    `xml:"iconserver,attr"`
+	IconFarm                     int    `xml:"iconfarm,attr"`
+	PathAlias                    string `xml:"path_alias,attr"`
+	HasStats                     bool   `xml:"has_stats,attr"`
+	ProBadge                     string `xml:"pro_badge,attr"`
+	Expire                       int    `xml:"expire,attr"`
+	UploadCount                  int    `xml:"upload_count,attr"`
+	UploadLimit                  int    `xml:"upload_limit,attr"`
+	UploadLimitStatus            string `xml:"upload_limit_status,attr"`
+	IsCognitoUser                bool   `xml:"is_cognito_user,attr"`
+	AllRightsReservedPhotosCount int    `xml:"all_rights_reserved_photos_count,attr"`
+	HasAdfree                    bool   `xml:"has_adfree,attr"`
+	HasFreeStandardShipping      bool   `xml:"has_free_standard_shipping,attr"`
+	HasFreeEducationalResources  bool   `xml:"has_free_educational_resources,attr"`
+
+	Username    string      `xml:"username"`
+	Realname    string      `xml:"realname"`
+	MboxSha1Sum string      `xml:"mbox_sha1sum"`
+	Location    string      `xml:"location"`
+	Timezone    xmlTimeZone `xml:"timezone"`
+	PhotosUrl   string      `xml:"photosurl"`
+	ProfileUrl  string      `xml:"profileurl"`
+	Photos      struct {
+		FirstDate      int     `xml:"firstdate"`
+		FirstDateTaken xmlTime `xml:"firstdatetaken"`
+		Count          int     `xml:"count"`
+	} `xml:"photos"`
+}
+
+type xmlTime struct {
+	time.Time
+}
+
+func (t *xmlTime) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var v string
+	err := d.DecodeElement(&v, &start)
+	if err != nil {
+		return err
+	}
+	parse, err := time.Parse("2006-01-02 15:04:05", v)
+	if err != nil {
+		return err
+	}
+	*t = xmlTime{parse}
+	return nil
+}
+
+// xmlTimeZone allows unmarshaling a time.Location from the timezone_id attribute
+type xmlTimeZone struct{ time.Location }
+
+func (tz *xmlTimeZone) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	v := struct {
+		TimezoneID string `xml:"timezone_id,attr"`
+	}{}
+	err := d.DecodeElement(&v, &start)
+	if err != nil {
+		return err
+	}
+
+	parsed, err := time.LoadLocation(v.TimezoneID)
+	if err != nil {
+		return err
+	}
+	*tz = xmlTimeZone{*parsed}
+	return nil
+}
+
+type PersonResponse struct {
+	flickr.BasicResponse
+	Person Person `xml:"person"`
+}
+
+type PeopleClient struct {
+	hc *http.Client
+	fc *flickr.FlickrRequestClient
+}
+
+func NewPeopleClient(hc *http.Client, fc *flickr.FlickrRequestClient) *PeopleClient {
+	return &PeopleClient{hc: hc, fc: fc}
+}
+
+func (pc *PeopleClient) GetInfo(ctx context.Context, userId string) (*Person, error) {
+	v := url.Values{}
+	v.Set("user_id", userId)
+
+	req, err := pc.fc.NewRequestWithContext(ctx, http.MethodGet, "flickr.people.getInfo", v, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := pc.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http %s: %v", req.Method, err)
+	}
+	defer res.Body.Close()
+
+	for k := range res.Header {
+		fmt.Printf("%s: %s\n", k, res.Header.Get(k))
+	}
+
+	response := PersonResponse{}
+	err = flickr.ParseApiResponse(res, &response)
+	if err != nil {
+		return nil, fmt.Errorf("parse api response: %w", err)
+	}
+
+	return &response.Person, nil
+}
+
+func (pc *PeopleClient) GetPhotos(ctx context.Context,
+	userId string, opts GetPhotosOptionalArgs) (*PhotoList, error) {
+
+	v := url.Values{}
+
+	v.Set("user_id", userId)
 	if opts.SafeSearch != NoSafetySpecified {
-		client.Args.Set("safe_search", strconv.Itoa(int(opts.SafeSearch)))
+		v.Set("safe_search", strconv.Itoa(int(opts.SafeSearch)))
 	}
 	if opts.MinUploadDate != "" {
-		client.Args.Set("min_upload_date", opts.MinUploadDate)
+		v.Set("min_upload_date", opts.MinUploadDate)
 	}
 	if opts.MaxUploadDate != "" {
-		client.Args.Set("min_upload_date", opts.MaxUploadDate)
+		v.Set("min_upload_date", opts.MaxUploadDate)
 	}
 	if opts.MinTakenDate != "" {
-		client.Args.Set("min_taken_date", opts.MinTakenDate)
+		v.Set("min_taken_date", opts.MinTakenDate)
 	}
 	if opts.MaxTakenDate != "" {
-		client.Args.Set("max_taken_date", opts.MaxTakenDate)
+		v.Set("max_taken_date", opts.MaxTakenDate)
 	}
 	if opts.ContentType != NoContentTypeSpecified {
-		client.Args.Set("content_type", strconv.Itoa(int(opts.ContentType)))
+		v.Set("content_type", strconv.Itoa(int(opts.ContentType)))
 	}
 	if opts.PrivacyFilter != NoPrivacyFilterSpecified {
-		client.Args.Set("privacy_filter", strconv.Itoa(int(opts.PrivacyFilter)))
+		v.Set("privacy_filter", strconv.Itoa(int(opts.PrivacyFilter)))
 	}
 	if opts.PerPage != 0 {
-		client.Args.Set("per_page", strconv.Itoa(opts.PerPage))
+		v.Set("per_page", strconv.Itoa(opts.PerPage))
 	}
 	if opts.Page != 0 {
-		client.Args.Set("page", strconv.Itoa(opts.Page))
+		v.Set("page", strconv.Itoa(opts.Page))
 	}
 	if opts.Extras != "" {
-		client.Args.Set("extras", opts.Extras)
+		v.Set("extras", opts.Extras)
 	}
-	client.OAuthSign()
-	fmt.Println("client", client)
 
-	response := &PhotoListResponse{}
-	err := flickr.DoGet(client, response)
-	//	if err == nil {
-	//		fmt.Println("API response:", response.Extra)
-	//	} else {
-	//		fmt.Println("API error:", err)
-	//	}
-	return response, err
+	req, err := pc.fc.NewRequestWithContext(ctx, http.MethodGet, "flickr.people.getPhotos", v, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := pc.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http %s: %v", req.Method, err)
+	}
+	defer res.Body.Close()
+
+	response := PhotoListResponse{}
+	err = flickr.ParseApiResponse(res, &response)
+	if err != nil {
+		return nil, fmt.Errorf("parse api response: %w", err)
+	}
+
+	return &response.Photos, err
 }

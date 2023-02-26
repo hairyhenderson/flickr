@@ -1,20 +1,27 @@
 package photos
 
 import (
-	"gopkg.in/masci/flickr.v2"
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/hairyhenderson/flickr"
 )
 
 type PhotoInfo struct {
-	Id             string `xml:"id,attr"`
-	Secret         string `xml:"secret,attr"`
-	Server         string `xml:"server,attr"`
-	Farm           string `xml:"farm,attr"`
-	DateUploaded   string `xml:"dateuploaded,attr"`
-	IsFavorite     bool   `xml:"isfavorite,attr"`
-	License        string `xml:"license,attr"`
+	Id           string `xml:"id,attr"`
+	Secret       string `xml:"secret,attr"`
+	Server       string `xml:"server,attr"`
+	Farm         string `xml:"farm,attr"`
+	DateUploaded string `xml:"dateuploaded,attr"`
+	IsFavorite   bool   `xml:"isfavorite,attr"`
+	License      string `xml:"license,attr"`
 	// NOTE: one less than safety level set on upload (ie, here 0 = safe, 1 = moderate, 2 = restricted)
 	//       while on upload, 1 = safe, 2 = moderate, 3 = restricted
-	SafetyLevel    int    `xml:"safety_level,attr"` 
+	SafetyLevel    int    `xml:"safety_level,attr"`
 	Rotation       int    `xml:"rotation,attr"`
 	OriginalSecret string `xml:"originalsecret,attr"`
 	OriginalFormat string `xml:"originalformat,attr"`
@@ -115,4 +122,120 @@ func SetDates(client *flickr.FlickrClient, id string, datePosted string, dateTak
 	response := &flickr.BasicResponse{}
 	err := flickr.DoPost(client, response)
 	return response, err
+}
+
+type PhotoPerms struct {
+	IsPublic uint8 `xml:"ispublic,attr"` // 1 to set the photo to public, 0 to set it to private.
+	IsFriend uint8 `xml:"isfriend,attr"` // 1 to make the photo visible to friends when private, 0 to not.
+	IsFamily uint8 `xml:"isfamily,attr"` // 1 to make the photo visible to family when private, 0 to not.
+
+	Comment uint8 `xml:"permcomment,attr"` // who can add comments to the photo and it's notes. one of:
+	// 0: nobody
+	// 1: friends & family
+	// 2: contacts
+	// 3: everybody
+	AddMeta uint8 `xml:"permaddmeta,attr"` // who can add notes and tags to the photo. one of:
+	// 0: nobody / just the owner
+	// 1: friends & family
+	// 2: contacts
+	// 3: everybody
+}
+
+type PhotoPermsResponse struct {
+	flickr.BasicResponse
+	Perms PhotoPerms `xml:"perms"`
+}
+
+func GetPerms(client *flickr.FlickrClient, id string) (*PhotoPermsResponse, error) {
+	client.Init()
+	client.EndpointUrl = flickr.API_ENDPOINT
+	client.HTTPVerb = "POST"
+	client.Args.Set("method", "flickr.photos.getPerms")
+	client.Args.Set("photo_id", id)
+
+	client.OAuthSign()
+
+	response := &PhotoPermsResponse{}
+	err := flickr.DoPost(client, response)
+	if err != nil {
+		return nil, err
+	}
+
+	return response, err
+}
+
+func SetPerms(client *flickr.FlickrClient, id string, perms PhotoPerms) (*flickr.BasicResponse, error) {
+	client.Init()
+	client.EndpointUrl = flickr.API_ENDPOINT
+	client.HTTPVerb = "POST"
+	client.Args.Set("method", "flickr.photos.setPerms")
+	client.Args.Set("photo_id", id)
+	client.Args.Set("is_public", strconv.Itoa(int(perms.IsPublic)))
+	client.Args.Set("is_friend", strconv.Itoa(int(perms.IsFriend)))
+	client.Args.Set("is_family", strconv.Itoa(int(perms.IsFamily)))
+
+	client.Args.Set("perm_comment", strconv.Itoa(int(perms.Comment)))
+	client.Args.Set("perm_addmeta", strconv.Itoa(int(perms.AddMeta)))
+
+	client.OAuthSign()
+
+	response := &flickr.BasicResponse{}
+	err := flickr.DoPost(client, response)
+	return response, err
+}
+
+func SetBatchPerms(client *flickr.FlickrClient, ids []string, perms PhotoPerms) (*flickr.BasicResponse, error) {
+	client.Init()
+	client.EndpointUrl = flickr.API_ENDPOINT
+	client.HTTPVerb = "POST"
+	client.Args.Set("method", "flickr.photos.setPerms")
+	client.Args.Set("photo_ids", strings.Join(ids, ","))
+	client.Args.Set("is_public", strconv.Itoa(int(perms.IsPublic)))
+	client.Args.Set("is_friend", strconv.Itoa(int(perms.IsFriend)))
+	client.Args.Set("is_family", strconv.Itoa(int(perms.IsFamily)))
+
+	client.Args.Set("perm_comment", strconv.Itoa(int(perms.Comment)))
+	client.Args.Set("perm_addmeta", strconv.Itoa(int(perms.AddMeta)))
+
+	client.OAuthSign()
+
+	response := &flickr.BasicResponse{}
+	err := flickr.DoPost(client, response)
+	return response, err
+}
+
+type PhotoClient struct {
+	hc *http.Client
+	fc *flickr.FlickrRequestClient
+}
+
+func NewPhotoClient(hc *http.Client, fc *flickr.FlickrRequestClient) *PhotoClient {
+	return &PhotoClient{hc, fc}
+}
+
+func (pc *PhotoClient) GetInfo(ctx context.Context, id, secret string) (*PhotoInfo, error) {
+	v := url.Values{}
+	v.Set("photo_id", id)
+	if secret != "" {
+		v.Set("secret", secret)
+	}
+
+	req, err := pc.fc.NewRequestWithContext(ctx, http.MethodGet, "flickr.photos.getInfo", v, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := pc.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http %s: %v", req.Method, err)
+	}
+	defer res.Body.Close()
+
+	response := PhotoInfoResponse{}
+	err = flickr.ParseApiResponse(res, &response)
+	if err != nil {
+		return nil, fmt.Errorf("parse api response: %w", err)
+	}
+
+	return &response.Photo, nil
 }

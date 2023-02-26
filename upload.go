@@ -168,7 +168,7 @@ func UploadReaderWithClient(client *FlickrClient, photoReader io.Reader, name st
 	req.Header.Set("content-type", "multipart/form-data; boundary="+boundary)
 	req.ContentLength = -1 // unknown
 
-	if (httpClient == nil) {
+	if httpClient == nil {
 		// Create a Transport to explicitly use the http1.1 client
 		// TODO: for some reason, when we use the http2 client flickr API responds
 		// with HTTP: 411 (No Content Length : POST) whereas it should be ok to
@@ -190,6 +190,6 @@ func UploadReaderWithClient(client *FlickrClient, photoReader io.Reader, name st
 	}
 
 	apiResp := &UploadResponse{}
-	err = parseApiResponse(resp, apiResp)
+	err = ParseApiResponse(resp, apiResp)
 	return apiResp, err
 }

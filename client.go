@@ -2,11 +2,13 @@ package flickr
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -158,4 +160,76 @@ func (c *FlickrClient) getApiSignature(token_secret string) string {
 
 	data := []byte(base)
 	return fmt.Sprintf("%x", md5.Sum(data))
+}
+
+type FlickrRequestClient struct {
+	// Flickr application api key
+	apiKey string
+	// Flickr application api secret
+	apiSecret string
+	// User access token
+	oAuthToken string
+	// User secret token
+	oAuthTokenSecret string
+}
+
+func NewFlickrRequestClient(apiKey, apiSecret, oauthToken, oauthTokenSecret string) *FlickrRequestClient {
+	return &FlickrRequestClient{
+		apiKey:           apiKey,
+		apiSecret:        apiSecret,
+		oAuthToken:       oauthToken,
+		oAuthTokenSecret: oauthTokenSecret,
+	}
+}
+
+// NewRequestWithContext creates an OAuth-signed *http.Request ready to be sent to
+// the Flickr API
+func (f *FlickrRequestClient) NewRequestWithContext(ctx context.Context, httpMethod, flickrMethod string, args url.Values, body io.Reader) (*http.Request, error) {
+	r, err := http.NewRequestWithContext(ctx, httpMethod, API_ENDPOINT, body)
+	if err != nil {
+		return nil, err
+	}
+
+	v := url.Values{}
+
+	v.Set("method", flickrMethod)
+
+	for k := range args {
+		v.Set(k, args.Get(k))
+	}
+
+	// Add default OAuth params
+	v.Set("oauth_version", "1.0")
+	v.Set("oauth_signature_method", "HMAC-SHA1")
+	v.Set("oauth_nonce", generateNonce())
+	v.Set("oauth_timestamp", fmt.Sprintf("%d", time.Now().UTC().Unix()))
+
+	// Sign request
+	v.Set("oauth_token", f.oAuthToken)
+	v.Set("oauth_consumer_key", f.apiKey)
+	// shouldn't be necessary for OAUth
+	// v.Add("api_key", f.ApiKey)
+
+	sig := f.sign(httpMethod, v)
+	v.Set("oauth_signature", sig)
+
+	// Set args on URL query
+	r.URL.RawQuery = v.Encode()
+
+	return r, nil
+}
+
+func (f *FlickrRequestClient) sign(method string, v url.Values) string {
+	encoded := strings.ReplaceAll(v.Encode(), "+", "%20")
+	query := url.QueryEscape(encoded)
+
+	u := url.QueryEscape(API_ENDPOINT)
+
+	text := fmt.Sprintf("%s&%s&%s", method, u, query)
+	key := fmt.Sprintf("%s&%s", url.QueryEscape(f.apiSecret), url.QueryEscape(f.oAuthTokenSecret))
+
+	mac := hmac.New(sha1.New, []byte(key))
+	mac.Write([]byte(text))
+
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }

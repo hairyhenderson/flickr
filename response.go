@@ -2,10 +2,11 @@ package flickr
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 
-	flickErr "gopkg.in/masci/flickr.v2/error"
+	flickErr "github.com/hairyhenderson/flickr/error"
 )
 
 // Interface for Flickr request objects
@@ -67,7 +68,7 @@ func (r *BasicResponse) SetErrorMsg(msg string) {
 
 // Given an http.Response retrieved from Flickr, unmarshal results
 // into a FlickrResponse struct.
-func parseApiResponse(res *http.Response, r FlickrResponse) error {
+func ParseApiResponse(res *http.Response, r FlickrResponse) error {
 	defer res.Body.Close()
 	responseBody, err := ioutil.ReadAll(res.Body)
 	if err != nil {
@@ -83,6 +84,7 @@ func parseApiResponse(res *http.Response, r FlickrResponse) error {
 		r.SetErrorStatus(true)
 		r.SetErrorCode(-1)
 		r.SetErrorMsg(string(responseBody))
+		fmt.Printf("unmarshal error: %v\n", err)
 	}
 
 	if r.HasErrors() {

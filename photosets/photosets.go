@@ -2,36 +2,45 @@
 package photosets
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
-	"gopkg.in/masci/flickr.v2"
+	"github.com/hairyhenderson/flickr"
 )
 
 type Photoset struct {
-	Id                string `xml:"id,attr"`
-	Primary           string `xml:"primary,attr"`
-	Secret            string `xml:"secret,attr"`
-	Server            string `xml:"server,attr"`
-	Farm              string `xml:"farm,attr"`
-	Photos            int    `xml:"photos,attr"`
-	Videos            int    `xml:"videos,attr"`
-	NeedsInterstitial bool   `xml:"needs_interstitial,attr"`
-	VisCanSeeSet      bool   `xml:"visibility_can_see_set,attr"`
-	CountViews        int    `xml:"count_views,attr"`
-	CountComments     int    `xml:"count_comments,attr"`
-	CanComment        bool   `xml:"can_comment,attr"`
-	DateCreate        int    `xml:"date_create,attr"`
-	DateUpdate        int    `xml:"date_update,attr"`
-	Title             string `xml:"title"`
-	Description       string `xml:"description"`
-	Url               string `xml:"url,attr"`
-	Owner             string `xml:"owner,attr"`
+	Id                  string `xml:"id,attr"`
+	Owner               string `xml:"owner,attr"`
+	Username            string `xml:"username,attr"`
+	Primary             string `xml:"primary,attr"`
+	Secret              string `xml:"secret,attr"`
+	Server              string `xml:"server,attr"`
+	Farm                string `xml:"farm,attr"`
+	CountViews          int    `xml:"count_views,attr"`
+	CountComments       int    `xml:"count_comments,attr"`
+	CountPhotos         int    `xml:"count_photos,attr"`
+	CountVideos         int    `xml:"count_videos,attr"`
+	CanComment          bool   `xml:"can_comment,attr"`
+	DateCreate          int    `xml:"date_create,attr"`
+	DateUpdate          int    `xml:"date_update,attr"`
+	Photos              int    `xml:"photos,attr"`
+	VisibilityCanSeeSet bool   `xml:"visibility_can_see_set,attr"`
+	NeedsInterstitial   bool   `xml:"needs_interstitial,attr"`
+	Title               string `xml:"title"`
+	Description         string `xml:"description"`
 }
 
 type Photo struct {
-	Id    string `xml:"id,attr"`
-	Title string `xml:"title,attr"`
+	Id       string `xml:"id,attr"`
+	Title    string `xml:"title,attr"`
+	Secret   string `xml:"secret,attr"`
+	IsPublic string `xml:"ispublic,attr"`
+	IsFriend string `xml:"isfriend,attr"`
+	IsFamily string `xml:"isfamily,attr"`
 }
 
 type PhotosetsListResponse struct {
@@ -50,15 +59,17 @@ type PhotosetResponse struct {
 	Set Photoset `xml:"photoset"`
 }
 
+type PhotosList struct {
+	Page    int     `xml:"page,attr"`
+	Pages   int     `xml:"pages,attr"`
+	Perpage int     `xml:"perpage,attr"`
+	Total   int     `xml:"total,attr"`
+	Photos  []Photo `xml:"photo"`
+}
+
 type PhotosListResponse struct {
 	flickr.BasicResponse
-	Photoset struct {
-		Page    int     `xml:"page,attr"`
-		Pages   int     `xml:"pages,attr"`
-		Perpage int     `xml:"perpage,attr"`
-		Total   int     `xml:"total,attr"`
-		Photos  []Photo `xml:"photo"`
-	} `xml:"photoset"`
+	Photoset PhotosList `xml:"photoset"`
 }
 
 // Return the public sets belonging to the user with userId.
@@ -164,6 +175,7 @@ func GetPhotos(client *flickr.FlickrClient, authenticate bool, photosetId, owner
 	if page > 1 {
 		client.Args.Set("page", strconv.Itoa(page))
 	}
+	client.Args.Set("per_page", "50")
 	// sign the client for authentication and authorization
 	if authenticate {
 		client.OAuthSign()
@@ -289,4 +301,71 @@ func SetPrimaryPhoto(client *flickr.FlickrClient, photosetId, primaryId string) 
 	response := &flickr.BasicResponse{}
 	err := flickr.DoPost(client, response)
 	return response, err
+}
+
+type PhotosetClient struct {
+	hc *http.Client
+	fc *flickr.FlickrRequestClient
+}
+
+func NewPhotosetClient(hc *http.Client, fc *flickr.FlickrRequestClient) *PhotosetClient {
+	return &PhotosetClient{hc, fc}
+}
+
+func (c *PhotosetClient) GetInfo(ctx context.Context, photosetId, userId string) (*Photoset, error) {
+	v := url.Values{}
+	v.Set("photoset_id", photosetId)
+	v.Set("user_id", userId)
+
+	req, err := c.fc.NewRequestWithContext(ctx, http.MethodGet, "flickr.photosets.getInfo", v, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := c.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http %s: %v", req.Method, err)
+	}
+	defer res.Body.Close()
+
+	response := PhotosetResponse{}
+	err = flickr.ParseApiResponse(res, &response)
+	if err != nil {
+		return nil, fmt.Errorf("parse api response: %w", err)
+	}
+
+	fmt.Printf("extra: %+v\n", response.Extra)
+
+	return &response.Set, nil
+}
+
+func (c *PhotosetClient) GetPhotos(ctx context.Context, photosetId, userId string, page int) (*PhotosList, error) {
+	v := url.Values{}
+	v.Set("photoset_id", photosetId)
+	v.Set("user_id", userId)
+
+	// if not provided, flickr defaults this argument to 1
+	if page > 1 {
+		v.Set("page", strconv.Itoa(page))
+	}
+	v.Set("per_page", "50")
+
+	req, err := c.fc.NewRequestWithContext(ctx, http.MethodGet, "flickr.photosets.getPhotos", v, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := c.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http %s: %v", req.Method, err)
+	}
+	defer res.Body.Close()
+
+	response := PhotosListResponse{}
+	err = flickr.ParseApiResponse(res, &response)
+	if err != nil {
+		return nil, fmt.Errorf("parse api response: %w", err)
+	}
+
+	return &response.Photoset, nil
 }

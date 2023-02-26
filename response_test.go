@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	flickErr "gopkg.in/masci/flickr.v2/error"
+	flickErr "github.com/hairyhenderson/flickr/error"
 )
 
 func TestFlickrResponse(t *testing.T) {
@@ -72,7 +72,7 @@ func TestParseResponse(t *testing.T) {
 	response := &http.Response{}
 	response.Body = NewFakeBody(bodyStr)
 
-	err := parseApiResponse(response, flickrResp)
+	err := ParseApiResponse(response, flickrResp)
 
 	Expect(t, err, nil)
 	Expect(t, flickrResp.Foo, "Foo!")
@@ -80,14 +80,14 @@ func TestParseResponse(t *testing.T) {
 	response = &http.Response{}
 	response.Body = NewFakeBody("a_non_rest_format_error")
 
-	err = parseApiResponse(response, flickrResp)
+	err = ParseApiResponse(response, flickrResp)
 	ferr, ok := err.(*flickErr.Error)
 	Expect(t, ok, true)
 	Expect(t, ferr.ErrorCode, 10)
 
 	response = &http.Response{}
 	response.Body = NewFakeBody(`<?xml version="1.0" encoding="utf-8" ?><rsp stat="fail"></rsp>`)
-	err = parseApiResponse(response, flickrResp)
+	err = ParseApiResponse(response, flickrResp)
 	//ferr, ok := err.(*flickErr.Error)
 	//Expect(t, ok, true)
 	//Expect(t, ferr.ErrorCode, 10)
@@ -111,7 +111,7 @@ func TestExtra(t *testing.T) {
 	response := &http.Response{}
 	response.Body = NewFakeBody(bodyStr)
 
-	err := parseApiResponse(response, flickrResp)
+	err := ParseApiResponse(response, flickrResp)
 
 	Expect(t, err, nil)
 	Expect(t, flickrResp.Extra != "", true)
